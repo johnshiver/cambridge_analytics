@@ -36,10 +36,7 @@ func getLocations(twitter_client *twitter.Client) {
 	}
 }
 
-var token *oauth1.Token
-var config *oauth1.Config
-
-func getTokens() {
+func getTokens() (*oauth1.Token, *oauth1.Config) {
 	consumerKey := os.Getenv("consumer_key")
 	consumerSecret := os.Getenv("consumer_secret")
 	accessToken := os.Getenv("access_token")
@@ -51,40 +48,63 @@ func getTokens() {
 
 	config = oauth1.NewConfig(consumerKey, consumerSecret)
 	token = oauth1.NewToken(accessToken, accessSecret)
+	return token, config
 }
 
-func inspectHashTagsFromUserTweets(userTweets []string) []string {
+func extractFromUserTweets(userTweets []string) ([]string, []string) {
 	hash_tags := []string{}
+	mentions := []string{}
 	for _, tweet := range userTweets {
 		words := strings.Split(tweet, " ")
 		for _, word := range words {
 			if strings.HasPrefix(word, "#") {
 				hash_tags = append(hash_tags, word)
 			}
+			if strings.HasPrefix(word, "@") {
+				mentions = append(mentions, word)
+			}
 		}
 	}
-	return hash_tags
+	return hash_tags, mentions
+
+}
+
+func printSortedCount(itemCounts map[string]int, threshold int) {
+	counts := []int{}
+	countItems := make(map[int][]string)
+	for item, count := range itemCounts {
+		countItems[count] = append(countItems[count], item)
+	}
+
+	for count, _ := range countItems {
+		counts = append(counts, count)
+	}
+
+	sort.Ints(counts)
+	for _, i := range counts {
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println(i)
+		fmt.Println(strings.Repeat("-", 45))
+		for _, item := range countItems[i] {
+			fmt.Println(item)
+		}
+	}
+}
+
+func initApp() *twitter.Client {
+
+	token, config := getTokens()
+	auth_http_client := config.Client(oauth1.NoContext, token)
+	twitter_client := twitter.NewClient(auth_http_client)
+	return twitter_client
 
 }
 
 func main() {
-	//	possible_pro_russia_trolls := []string{
-	//		"UniteAlbertans2",
-	//		"KAGcommittee",
-	//		"CovfefeNation",
-	//		"PISTOLGRIP6spd",
-	//		"boriskogan5",
-	//		"avonsalez",
-	//		"MarthaLimKhemra",
-	//	}
-	//	possible_pro_resistance_trolls := []string{
-	//		"rjakes65",
-	//	}
-	//
-	getTokens()
-	auth_http_client := config.Client(oauth1.NoContext, token)
-	twitter_client := twitter.NewClient(auth_http_client)
+	twitter_client := initApp()
 
+	// created buffered channel because user_ticker will block
+	// on tweet receive
 	tweet_chan := make(chan *twitter.Tweet, 5000)
 	done := make(chan interface{})
 	demux := createDemux(tweet_chan)
@@ -92,65 +112,92 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// probably bad design, but these are datastructures
+		// that are shared between cases.
+		// TODO use sync.Map for these...mb can take advantage
+		// of more goroutines
 		globalUsers := make(map[string]int, 0)
 		globalUserTweets := make(map[string][]string)
-		globalHashTagCounts := make(map[string]int, 0)
 		minutes := 0
-		user_ticker := time.NewTicker(time.Minute * 1)
+		tweet_count := 0
+		user_ticker := time.NewTicker(time.Minute * 5)
+		check_tweet_count := time.NewTicker(time.Minute * 1)
 		for {
 			select {
 			case new_tweet, ok := <-tweet_chan:
 				if !ok {
 					done <- struct{}{}
 				}
+				tweet_count += 1
 				globalUsers[new_tweet.User.ScreenName] += 1
 				globalUserTweets[new_tweet.User.ScreenName] = append(globalUserTweets[new_tweet.User.ScreenName], new_tweet.Text)
 
+			case <-check_tweet_count.C:
+				fmt.Println(strings.Repeat("#", 90))
+				fmt.Println("Checking # of tweets")
+				fmt.Println(tweet_count)
+
 			case <-user_ticker.C:
-				minutes += 1
+				hashTagCounts := make(map[string]int, 0)
+				mentionCounts := make(map[string]int, 0)
+				minutes += 5
 				fmt.Printf("%d minutes of analysis\n", minutes)
 				countUser := make(map[int][]string)
 				for user, count := range globalUsers {
 					countUser[count] = append(countUser[count], user)
 				}
 
-				go func() {
-					importantCounts := []map[int][]string{}
-					counts := []int{}
-					tempMap := make(map[int][]string)
-					for count, users := range countUser {
-						if count > minutes/2 && count > 1 {
-							counts = append(counts, count)
-							tempMap[count] = users
-							importantCounts = append(importantCounts, tempMap)
-						}
-					}
-					sort.Ints(counts)
-					for _, i := range counts {
-						fmt.Println(strings.Repeat("-", 45))
-						fmt.Println(i)
-						for _, u := range countUser[i] {
-							fmt.Println(u)
-							fmt.Println(strings.Repeat("-", 45))
-							user_tweets := globalUserTweets[u]
-							hash_tags := inspectHashTagsFromUserTweets(user_tweets)
-							for _, hash_tag := range hash_tags {
-								globalHashTagCounts[hash_tag] = 1
-							}
+				// everything after this should be ok to
+				// run in a separate go routine i.e. unblock
+				// the code above
 
-						}
-						for hash_tag, _ := range globalHashTagCounts {
-							fmt.Println(hash_tag)
-						}
-					}
+				// turn this into function
 
+				importantCounts := []map[int][]string{}
+				counts := []int{}
+				tempMap := make(map[int][]string)
+				for count, users := range countUser {
+					if count > minutes/2 && count > 1 {
+						counts = append(counts, count)
+						tempMap[count] = users
+						importantCounts = append(importantCounts, tempMap)
+					}
+				}
+
+				fmt.Println(strings.Repeat("#", 90))
+				fmt.Println("User counts")
+
+				sort.Ints(counts)
+				for _, i := range counts {
 					fmt.Println(strings.Repeat("-", 45))
-				}()
+					fmt.Println(i)
+					fmt.Println(strings.Repeat("-", 45))
+					for _, u := range countUser[i] {
+						fmt.Println(u)
+						user_tweets := globalUserTweets[u]
+						hash_tags, mentions := extractFromUserTweets(user_tweets)
+						for _, hash_tag := range hash_tags {
+							hashTagCounts[hash_tag] += 1
+						}
+						for _, mention := range mentions {
+							mentionCounts[mention] += 1
+
+						}
+
+					}
+
+				}
+				fmt.Println(strings.Repeat("#", 90))
+				fmt.Println("Global hash tag counts")
+				printSortedCount(hashTagCounts, minutes)
+				fmt.Println(strings.Repeat("#", 90))
+				fmt.Println("Global mention counts")
+				printSortedCount(mentionCounts, minutes)
 
 			case <-done:
 				return
-			default:
-				continue
+				//default:
+				//	continue
 			}
 		}
 
