@@ -46,8 +46,8 @@ func getTokens() (*oauth1.Token, *oauth1.Config) {
 		log.Fatal("Consumer key/secret and Access token/secret required")
 	}
 
-	config = oauth1.NewConfig(consumerKey, consumerSecret)
-	token = oauth1.NewToken(accessToken, accessSecret)
+	config := oauth1.NewConfig(consumerKey, consumerSecret)
+	token := oauth1.NewToken(accessToken, accessSecret)
 	return token, config
 }
 
@@ -82,6 +82,9 @@ func printSortedCount(itemCounts map[string]int, threshold int) {
 
 	sort.Ints(counts)
 	for _, i := range counts {
+		if i < 10 {
+			continue
+		}
 		fmt.Println(strings.Repeat("-", 45))
 		fmt.Println(i)
 		fmt.Println(strings.Repeat("-", 45))
@@ -89,6 +92,48 @@ func printSortedCount(itemCounts map[string]int, threshold int) {
 			fmt.Println(item)
 		}
 	}
+}
+
+func printUserCounts(counts []int, countUser map[int][]string) {
+	fmt.Println(strings.Repeat("#", 90))
+	fmt.Println("User counts")
+	sort.Ints(counts)
+	for _, i := range counts {
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println(i)
+		fmt.Println(strings.Repeat("-", 45))
+		for _, u := range countUser[i] {
+			fmt.Println(u)
+		}
+	}
+}
+
+func analyzeUserTweets(counts []int, countUser map[int][]string, globalUserTweets map[string][]string) (map[string]int, map[string]int) {
+	hashTagCounts := make(map[string]int, 0)
+	mentionCounts := make(map[string]int, 0)
+	for _, i := range counts {
+		for _, u := range countUser[i] {
+			user_tweets := globalUserTweets[u]
+			hash_tags, mentions := extractFromUserTweets(user_tweets)
+			for _, hash_tag := range hash_tags {
+				hashTagCounts[hash_tag] += 1
+			}
+			for _, mention := range mentions {
+				mentionCounts[mention] += 1
+			}
+		}
+	}
+	return hashTagCounts, mentionCounts
+}
+
+func getUserCounts(countUser map[int][]string, minutes int) []int {
+	counts := []int{}
+	for count, _ := range countUser {
+		if count > minutes/5 && count > 1 {
+			counts = append(counts, count)
+		}
+	}
+	return counts
 }
 
 func initApp() *twitter.Client {
@@ -133,13 +178,13 @@ func main() {
 				globalUserTweets[new_tweet.User.ScreenName] = append(globalUserTweets[new_tweet.User.ScreenName], new_tweet.Text)
 
 			case <-check_tweet_count.C:
-				fmt.Println(strings.Repeat("#", 90))
-				fmt.Println("Checking # of tweets")
-				fmt.Println(tweet_count)
+				go func() {
+					fmt.Println(strings.Repeat("#", 90))
+					fmt.Println("Checking # of tweets")
+					fmt.Println(tweet_count)
+				}()
 
 			case <-user_ticker.C:
-				hashTagCounts := make(map[string]int, 0)
-				mentionCounts := make(map[string]int, 0)
 				minutes += 5
 				fmt.Printf("%d minutes of analysis\n", minutes)
 				countUser := make(map[int][]string)
@@ -150,54 +195,22 @@ func main() {
 				// everything after this should be ok to
 				// run in a separate go routine i.e. unblock
 				// the code above
+				go func() {
+					counts := getUserCounts(countUser, minutes)
+					printUserCounts(counts, countUser)
+					hashTagCounts, mentionCounts := analyzeUserTweets(counts, countUser, globalUserTweets)
 
-				// turn this into function
+					fmt.Println(strings.Repeat("#", 90))
+					fmt.Println("Global hash tag counts")
+					printSortedCount(hashTagCounts, minutes)
 
-				importantCounts := []map[int][]string{}
-				counts := []int{}
-				tempMap := make(map[int][]string)
-				for count, users := range countUser {
-					if count > minutes/2 && count > 1 {
-						counts = append(counts, count)
-						tempMap[count] = users
-						importantCounts = append(importantCounts, tempMap)
-					}
-				}
-
-				fmt.Println(strings.Repeat("#", 90))
-				fmt.Println("User counts")
-
-				sort.Ints(counts)
-				for _, i := range counts {
-					fmt.Println(strings.Repeat("-", 45))
-					fmt.Println(i)
-					fmt.Println(strings.Repeat("-", 45))
-					for _, u := range countUser[i] {
-						fmt.Println(u)
-						user_tweets := globalUserTweets[u]
-						hash_tags, mentions := extractFromUserTweets(user_tweets)
-						for _, hash_tag := range hash_tags {
-							hashTagCounts[hash_tag] += 1
-						}
-						for _, mention := range mentions {
-							mentionCounts[mention] += 1
-
-						}
-
-					}
-
-				}
-				fmt.Println(strings.Repeat("#", 90))
-				fmt.Println("Global hash tag counts")
-				printSortedCount(hashTagCounts, minutes)
-				fmt.Println(strings.Repeat("#", 90))
-				fmt.Println("Global mention counts")
-				printSortedCount(mentionCounts, minutes)
+					fmt.Println(strings.Repeat("#", 90))
+					fmt.Println("Global mention counts")
+					printSortedCount(mentionCounts, minutes)
+				}()
 
 			case <-done:
 				return
-				//default:
-				//	continue
 			}
 		}
 
