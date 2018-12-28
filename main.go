@@ -82,7 +82,7 @@ func printSortedCount(itemCounts map[string]int, threshold int) {
 
 	sort.Ints(counts)
 	for _, i := range counts {
-		if i < 10 {
+		if i < 2 {
 			continue
 		}
 		fmt.Println(strings.Repeat("-", 45))
@@ -165,8 +165,8 @@ func main() {
 		globalUserTweets := make(map[string][]string)
 		minutes := 0
 		tweet_count := 0
-		user_ticker := time.NewTicker(time.Minute * 5)
-		check_tweet_count := time.NewTicker(time.Minute * 1)
+		user_ticker := time.NewTicker(time.Second * 30)
+		check_tweet_count := time.NewTicker(time.Second * 20)
 		for {
 			select {
 			case new_tweet, ok := <-tweet_chan:
@@ -220,8 +220,27 @@ func main() {
 		wg.Wait()
 	}()
 
+	tracking_params := []string{
+		"realDonaldTrump",
+		"inittowinit007",
+		"QAnon_",
+		"QAnon",
+	}
+	fmt.Println(strings.Repeat("-", 90))
+	fmt.Println("New stream tracking these parameters:")
+	for _, param := range tracking_params {
+		fmt.Println(param)
+	}
+	fmt.Println(strings.Repeat("-", 90))
+
+	formatted_params := []string{}
+	for _, param := range tracking_params {
+		formatted_params = append(formatted_params, fmt.Sprintf("@%v", param))
+		formatted_params = append(formatted_params, fmt.Sprintf("to:%v", param))
+	}
+
 	filterParams := &twitter.StreamFilterParams{
-		Track:         []string{"to:realDonaldTrump", "@realDonaldTrump"},
+		Track:         formatted_params,
 		StallWarnings: twitter.Bool(true),
 	}
 	stream, err := twitter_client.Streams.Filter(filterParams)
