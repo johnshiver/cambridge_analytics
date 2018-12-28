@@ -1,1 +1,16 @@
+<<<<<<< HEAD
 .logs/
+=======
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, build with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+>>>>>>> 927934b9b1121d2a9539ceb252e8582f6b53bb0e
